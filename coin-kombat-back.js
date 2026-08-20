@@ -1,134 +1,102 @@
 const express = require('express');
-const cors = require('cors');
-
 const app = express();
-app.use(cors());
 app.use(express.json());
 
-const users = {};
-
-const CARDS = {
-  marketing: { id: 'marketing', name: 'Реклама Coin Kombat', baseCost: 100, profitPerHour: 50 },
-  servers: { id: 'servers', name: 'Сервера Kombat', baseCost: 500, profitPerHour: 300 },
-  team: { id: 'team', name: 'Команда разработчиков', baseCost: 2000, profitPerHour: 1200 },
-  license: { id: 'license', name: 'Лицензия крипто-биржи', baseCost: 10000, profitPerHour: 5500 }
+const users = {
+    "user_1": {
+        id: "user_1",
+        lvl: 1,
+        stars: 100,
+        isPremium: false,
+        upgrades: {
+            speed: 0,
+            income: 0,
+            clicker: 0
+        },
+        inventory: []
+    }
 };
 
-const TASKS = [
-  { id: 'telegram', title: 'Подписка на Telegram', reward: 5000, isDone: false },
-  { id: 'taps100', title: 'Сделать 100 кликов', reward: 1000, isDone: false }
-];
+const SHOP_ITEMS = {
+    "speed_boost": { name: "Speed Upgrade", price: 15, type: "upgrade", key: "speed" },
+    "income_boost": { name: "Income Upgrade", price: 25, type: "upgrade", key: "income" },
+    "clicker_boost": { name: "Clicker Upgrade", price: 35, type: "upgrade", key: "clicker" },
+    "premium_status": { name: "Premium Status", price: 50, type: "status", key: "isPremium" }
+};
 
-// Синхронизация данных пользователя
-app.post('/api/user/sync', (req, res) => {
-  const { userId, referrerId } = req.body;
-  if (!users[userId]) {
-    users[userId] = {
-      coins: 100,
-      profitPerHour: 0,
-      energy: 1000,
-      maxEnergy: 1000,
-      lastUpdate: Date.now(),
-      cards: {},
-      completedTasks: [],
-      referralsCount: 0,
-      isPremium: false
-    };
-
-    if (referrerId && users[referrerId] && referrerId !== userId) {
-      users[referrerId].coins += 2500;
-      users[referrerId].referralsCount += 1;
+app.get('/profile/:userId', (req, res) => {
+    const user = users[req.params.userId];
+    if (!user) {
+        return res.status(404).json({ error: "User not found" });
     }
-  }
-
-  const user = users[userId];
-  const now = Date.now();
-  const secondsPassed = (now - user.lastUpdate) / 1000;
-  
-  const passiveEarned = (user.profitPerHour / 3600) * secondsPassed;
-  user.coins += passiveEarned;
-
-  const energyRecovered = Math.floor(secondsPassed * 3);
-  user.energy = Math.min(user.maxEnergy, user.energy + energyRecovered);
-
-  user.lastUpdate = now;
-
-  res.json({ user, cardsConfig: CARDS, tasksConfig: TASKS });
+    return res.json(user);
 });
 
-// Клики
-app.post('/api/user/tap', (req, res) => {
-  const { userId, count } = req.body;
-  const user = users[userId];
+app.post('/buy', (req, res) => {
+    const { userId, itemId } = req.body;
+    const user = users[userId];
+    const item = SHOP_ITEMS[itemId];
 
-  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+    if (!user) {
+        return res.status(404).json({ error: "User not found" });
+    }
 
-  const tapValue = user.isPremium ? count * 2 : count;
+    if (!item) {
+        return res.status(400).json({ error: "Item not found" });
+    }
 
-  if (user.energy >= count) {
-    user.coins += tapValue;
-    user.energy -= count;
-    res.json({ success: true, coins: user.coins, energy: user.energy, added: tapValue });
-  } else {
-    res.status(400).json({ error: 'Недостаточно энергии' });
-  }
+    if (user.stars < item.price) {
+        return res.status(400).json({ error: "Not enough stars" });
+    }
+
+    user.stars -= item.price;
+
+    if (item.type === "upgrade") {
+        user.upgrades[item.key] += 1;
+    } else if (item.type === "status") {
+        user[item.key] = true;
+    } else {
+        user.inventory.push(itemId);
+    }
+
+    return res.json({
+        message: "Purchase successful",
+        user: user
+    });
 });
 
-// Покупка карточек за игровые монеты
-app.post('/api/user/buy-card', (req, res) => {
-  const { userId, cardId } = req.body;
-  const user = users[userId];
-  const card = CARDS[cardId];
+app.post('/level-up', (req, res) => {
+    const { userId } = req.body;
+    const user = users[userId];
 
-  if (!user || !card) return res.status(400).json({ error: 'Неверный запрос' });
+    if (!user) {
+        return res.status(404).json({ error: "User not found" });
+    }
 
-  const currentLevel = user.cards[cardId] || 0;
-  const cost = Math.floor(card.baseCost * Math.pow(1.5, currentLevel));
-
-  if (user.coins >= cost) {
-    user.coins -= cost;
-    user.cards[cardId] = currentLevel + 1;
-    user.profitPerHour += card.profitPerHour;
-    res.json({ success: true, user });
-  } else {
-    res.status(400).json({ error: 'Недостаточно монет' });
-  }
+    user.lvl += 1;
+    return res.json({
+        message: "Level up successful",
+        lvl: user.lvl,
+        user: user
+    });
 });
 
-// Начисление наград за Telegram Stars
-app.post('/api/user/buy-stars-item', (req, res) => {
-  const { userId, itemType } = req.body;
-  const user = users[userId];
+app.post('/add-stars', (req, res) => {
+    const { userId, amount } = req.body;
+    const user = users[userId];
 
-  if (!user) return res.status(404).json({ error: 'Пользователь не найден' });
+    if (!user) {
+        return res.status(404).json({ error: "User not found" });
+    }
 
-  if (itemType === 'coins_pack') {
-    user.coins += 100000;
-    res.json({ success: true, user, message: '+100,000 монет зачислено!' });
-  } else if (itemType === 'premium') {
-    user.isPremium = true;
-    user.profitPerHour += 10000;
-    res.json({ success: true, user, message: 'Премиум зачислен (+10,000/ч и 2x за клик)!' });
-  } else {
-    res.status(400).json({ error: 'Неизвестный товар' });
-  }
+    user.stars += amount;
+    return res.json({
+        message: "Stars added",
+        stars: user.stars,
+        user: user
+    });
 });
 
-app.post('/api/user/complete-task', (req, res) => {
-  const { userId, taskId } = req.body;
-  const user = users[userId];
-  const task = TASKS.find(t => t.id === taskId);
-
-  if (!user || !task) return res.status(400).json({ error: 'Задание не найдено' });
-
-  if (!user.completedTasks.includes(taskId)) {
-    user.completedTasks.push(taskId);
-    user.coins += task.reward;
-    res.json({ success: true, user });
-  } else {
-    res.status(400).json({ error: 'Задание уже выполнено' });
-  }
+app.listen(3000, () => {
+    console.log('Server running on port 3000');
 });
-
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => console.log(`Coin Kombat Backend running on port ${PORT}`));
